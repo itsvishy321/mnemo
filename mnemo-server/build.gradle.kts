@@ -17,4 +17,8 @@ dependencies {
 
     api(enforcedPlatform(libs.netty.bom))
     implementation(libs.bundles.netty)
+
+    // Test-only, so the pure-JDK contraband check (which inspects compile/runtime classpaths) is
+    // unaffected. Used to await socket state without sleeping.
+    testImplementation(libs.awaitility)
 }

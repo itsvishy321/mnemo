@@ -1,18 +1,24 @@
 package dev.vishalverma.mnemo.core.command;
 
 import dev.vishalverma.mnemo.core.command.impl.AppendCommand;
+import dev.vishalverma.mnemo.core.command.impl.CommandCommand;
 import dev.vishalverma.mnemo.core.command.impl.DbSizeCommand;
 import dev.vishalverma.mnemo.core.command.impl.DecrByCommand;
 import dev.vishalverma.mnemo.core.command.impl.DecrCommand;
 import dev.vishalverma.mnemo.core.command.impl.DelCommand;
+import dev.vishalverma.mnemo.core.command.impl.EchoCommand;
 import dev.vishalverma.mnemo.core.command.impl.ExistsCommand;
 import dev.vishalverma.mnemo.core.command.impl.FlushDbCommand;
 import dev.vishalverma.mnemo.core.command.impl.GetCommand;
 import dev.vishalverma.mnemo.core.command.impl.GetDelCommand;
 import dev.vishalverma.mnemo.core.command.impl.IncrByCommand;
 import dev.vishalverma.mnemo.core.command.impl.IncrCommand;
+import dev.vishalverma.mnemo.core.command.impl.InfoCommand;
 import dev.vishalverma.mnemo.core.command.impl.MGetCommand;
 import dev.vishalverma.mnemo.core.command.impl.MSetCommand;
+import dev.vishalverma.mnemo.core.command.impl.PingCommand;
+import dev.vishalverma.mnemo.core.command.impl.QuitCommand;
+import dev.vishalverma.mnemo.core.command.impl.SelectCommand;
 import dev.vishalverma.mnemo.core.command.impl.SetCommand;
 import dev.vishalverma.mnemo.core.command.impl.SetNxCommand;
 import dev.vishalverma.mnemo.core.command.impl.StrlenCommand;
@@ -73,7 +79,15 @@ public final class CommandRegistry {
             new ExistsCommand(),
             new TypeCommand(),
             new DbSizeCommand(),
-            new FlushDbCommand()));
+            new FlushDbCommand(),
+
+            // Server / connection family — what redis-cli needs to hold a session.
+            new PingCommand(),
+            new EchoCommand(),
+            new QuitCommand(),
+            new SelectCommand(),
+            new CommandCommand(),
+            new InfoCommand()));
     }
 
     /** The command, or {@code null} if the name is unknown. */

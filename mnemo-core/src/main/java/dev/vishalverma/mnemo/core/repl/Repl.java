@@ -54,6 +54,13 @@ public final class Repl {
                 }
                 out.write(evaluate(engine, trimmed));
                 out.write('\n');
+
+                // QUIT is a real command now, so it is dispatched and answered like any other —
+                // the front end just closes afterwards. The RESP server follows the same rule, so
+                // "QUIT replies OK, then the front end closes" reads identically in both.
+                if (isQuit(trimmed)) {
+                    break;
+                }
             }
             out.write(PROMPT);
             out.flush();
@@ -62,9 +69,13 @@ public final class Repl {
         out.flush();
     }
 
+    /** A REPL-only convenience; {@code EXIT} is not a Redis command and is never dispatched. */
     private static boolean isExit(String line) {
-        String upper = line.toUpperCase(Locale.ROOT);
-        return upper.equals("EXIT") || upper.equals("QUIT");
+        return line.toUpperCase(Locale.ROOT).equals("EXIT");
+    }
+
+    private static boolean isQuit(String line) {
+        return line.toUpperCase(Locale.ROOT).equals("QUIT");
     }
 
     private static String evaluate(Engine engine, String line) {

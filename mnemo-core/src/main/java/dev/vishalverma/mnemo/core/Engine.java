@@ -70,7 +70,7 @@ public final class Engine {
         }
 
         try {
-            return command.execute(new CommandContext(args, keyspace));
+            return command.execute(new CommandContext(args, keyspace, registry));
         } catch (MnemoException e) {
             return new Reply.Err(e.code(), e.getMessage());
         } catch (RuntimeException e) {
