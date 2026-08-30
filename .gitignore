@@ -13,3 +13,5 @@ bin/
 *.log
 .DS_Store
 data/
+
+.claude/
