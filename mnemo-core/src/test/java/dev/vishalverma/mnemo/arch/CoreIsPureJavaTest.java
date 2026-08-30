@@ -5,7 +5,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
-import dev.vishalverma.mnemo.core.CoreMarker;
+import dev.vishalverma.mnemo.core.Engine;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,13 +18,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * catches the thing the graph-level check cannot: a class that actually imports, extends,
  * annotates with, or throws something from a forbidden package.
  *
- * {@code @AnalyzeClasses(packagesOf = CoreMarker.class)} resolves against this module's own
+ * {@code @AnalyzeClasses(packagesOf = Engine.class)} resolves against this module's own
  * {@code build/classes/java/main} directory on the test runtime classpath — not a jar — so
  * there's no risk of the "resolves to a jar URL, DoNotIncludeJars silently imports nothing"
  * trap that shows up when ArchUnit runs against a *different* module's compiled output via a
  * project() dependency.
+ *
+ * The anchor class must live in the ROOT package {@code dev.vishalverma.mnemo.core}, because
+ * {@code packagesOf} sweeps that class's package and its subpackages. Anchoring on a class in,
+ * say, {@code core.store} would silently narrow every rule below to that one subpackage and stop
+ * guarding {@code command}, {@code type}, and {@code repl} — while still passing.
  */
-@AnalyzeClasses(packagesOf = CoreMarker.class, importOptions = ImportOption.DoNotIncludeTests.class)
+@AnalyzeClasses(packagesOf = Engine.class, importOptions = ImportOption.DoNotIncludeTests.class)
 class CoreIsPureJavaTest {
 
     @ArchTest
