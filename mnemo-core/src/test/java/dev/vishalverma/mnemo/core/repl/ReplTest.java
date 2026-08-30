@@ -111,10 +111,14 @@ class ReplTest {
             String name = command.name();
             List<String> out = replies(name + "\n");
 
-            assertThat(out).hasSize(1);
-            assertThat(out.get(0))
+            // Reachability is the claim, not reply shape: COMMAND renders one line per registered
+            // command, so pinning a line count here would just re-assert the registry's size.
+            // Running a command bare may legitimately produce an arity error — that still proves
+            // it was found.
+            assertThat(out).as("%s should produce a reply", name).isNotEmpty();
+            assertThat(out)
                 .as("%s should be reachable from the REPL", name)
-                .doesNotContain("unknown command");
+                .noneMatch(line -> line.contains("unknown command"));
         }
     }
 

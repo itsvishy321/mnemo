@@ -4,13 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**M1 (core engine & strings) complete.** `./gradlew clean build` is verified green end-to-end.
+**M2 (RESP + TCP server) complete.** `./gradlew clean build` is verified green end-to-end, and
+the unmodified `redis-cli` round-trips every implemented command against port 6380.
 
-`mnemo-core` holds a working single-threaded, single-shard engine: a binary-safe `Bytes` value
-type, a sealed `RedisValue`, a `Keyspace` with lazy TTL expiry, a sealed `Reply`, a
-`Command`/`CommandRegistry` pair, 17 string and generic commands, and a stdin REPL. There is
-still no RESP codec and no networking — `mnemo-protocol`, `mnemo-persistence`, and `mnemo-server`
-remain `*Marker` placeholders.
+`mnemo-core` holds a single-threaded, single-shard engine: a binary-safe `Bytes` type, a sealed
+`RedisValue`, a `Keyspace` with lazy TTL expiry, a sealed `Reply`, a `Command`/`CommandRegistry`
+pair, 23 commands, and a stdin REPL. `mnemo-protocol` holds an incremental RESP2 codec;
+`mnemo-server` a platform-thread-per-connection TCP server; `mnemo-app` wires both into Spring so
+`bootRun` serves HTTP on 8080 and RESP on 6380. `mnemo-persistence` is still a `*Marker`
+placeholder.
+
+Protocol support and its deliberate deviations from Redis are documented in
+[docs/protocol.md](docs/protocol.md).
 
 The full milestone-by-milestone implementation plan (M0–M10) — architecture, data structures,
 concurrency model, testing strategy, benchmarking — lives in [ROADMAP.md](ROADMAP.md); consult it
@@ -118,26 +123,29 @@ Note on `mnemo-server`'s Netty BOM: it's applied as `enforcedPlatform`, not `pla
 `enforcedPlatform` makes `mnemo-server`'s own pinned Netty version win regardless of what a
 downstream consumer's BOM says.
 
-### The engine as built (M1)
-
-`mnemo-core` packages, all under `dev.vishalverma.mnemo.core`:
+### The engine and server as built (M1 + M2)
 
 ```
-Engine.java   dispatch boundary — also the ArchUnit anchor (see below)
-type/         Bytes, RedisValue (sealed), StringValue, ListValue
-store/        Clock, ValueEntry (package-private), Keyspace
-error/        MnemoException + WrongType/Syntax/NotAnInteger
-command/      Reply (sealed), Command, Arity, Flag, CommandContext,
-              CommandRegistry, Args;  impl/ = one class per command
-repl/         InlineParser, ReplyPrinter, Repl
+mnemo-core     (dev.vishalverma.mnemo.core)
+  Engine.java   dispatch boundary — also the ArchUnit anchor (see below)
+  type/         Bytes, RedisValue (sealed), StringValue, ListValue
+  store/        Clock, ValueEntry (package-private), Keyspace
+  error/        MnemoException + WrongType/Syntax/NotAnInteger
+  command/      Reply (sealed), Command, Arity, Flag, CommandContext,
+                CommandRegistry, Args;  impl/ = one class per command
+  repl/         InlineParser, ReplyPrinter, Repl
+
+mnemo-protocol  RespLimits, ProtocolException, RespDecoder, RespEncoder
+mnemo-server    ServerConfig, RespServer (accept loop), Connection (per-connection loop)
+mnemo-app       RespProperties, MnemoConfiguration (Engine + RespServer beans)
 ```
 
 Four invariants worth preserving, each of which exists to stop a whole class of bug:
 
 - **`Engine.dispatch` is total — it never throws.** Bad input becomes a `Reply.Err`, and even an
-  unexpected `RuntimeException` becomes an internal-error reply. M2 calls this from a Netty event
-  loop, where one escaped throwable kills the loop thread and silently stops serving every
-  connection bound to it.
+  unexpected `RuntimeException` becomes an internal-error reply. That is what lets a bad command
+  be a reply rather than a dropped connection — and it is what M6's event loop will depend on,
+  since one escaped throwable there kills the loop thread for every connection bound to it.
 - **Commands never touch `ValueEntry`; they go through `Keyspace`.** Lazy expiry lives in one
   private `live()` method and the version bump in one `write()` method, so no command can forget
   either. `ValueEntry` is package-private to enforce this.
@@ -152,6 +160,27 @@ sweeps that class's package *and its subpackages*. Re-anchoring on a class in `s
 would silently narrow every purity rule to that one subpackage while still passing, because the
 `classes_were_actually_imported` net only asserts `> 0`. Verified: the sweep imports 49 classes
 across all 7 packages, and a violation planted in a subpackage does fail the rule.
+
+### Server invariants (M2)
+
+- **The dispatch lock is deliberate scaffolding.** `Keyspace` is a plain `HashMap`, single-threaded
+  by design, but thread-per-connection means N threads would enter it at once. `Connection.execute`
+  serialises dispatch behind a `ReentrantLock` — parsing and I/O stay parallel. It is a
+  `ReentrantLock` and **not `synchronized`** because on Java 21 a virtual thread blocking inside
+  `synchronized` pins its carrier, and M6 adds a virtual-thread transport. M5 replaces this with
+  one writer per shard.
+- **M2 uses platform threads on purpose.** It is the naive baseline M6 benchmarks Netty and virtual
+  threads *against*; switching it to virtual threads now would collapse two of the three comparison
+  arms. Netty is declared in `mnemo-server` but unused until M6.
+- **The encoder sanitises `Simple` and `Err` text.** Error replies embed client-supplied command
+  names, and a RESP bulk may legally contain CRLF — unsanitised, that splits one reply into two and
+  desynchronises the client. Done in the encoder so no future error message can reintroduce it.
+- **`mnemo-protocol` must stay Netty-free.** It applies `pure-java-conventions`, so the contraband
+  check fails the build if Netty reaches its classpath. The codec targets `OutputStream` and a
+  caller-supplied `byte[]`, which is also what lets M6 reuse it unchanged.
+- **`QUIT` replies, then the *front end* closes.** The command itself only returns OK; both the
+  REPL and `Connection` watch for the name and close after writing. Giving `Command` a
+  "close afterwards" channel would contaminate every other command's signature for the sake of one.
 
 Adding a command touches **exactly two files** — the new class in `command/impl/`, and one
 registration line in `CommandRegistry.standard()`. There is deliberately no dispatch switch, no
@@ -171,8 +200,10 @@ The ROADMAP is the design authority but contradicts itself in a few places. Reso
 | `impl/` holds "one class per command family" | One class per *command*, so the two-file rule is literal. A nested `Set` command class would also shadow `java.util.Set` in `flags()`. |
 | Lazy expiry is an M3 deliverable | Landed in M1 — `SET ... EX` is meaningless without it. M3 still owns active expiry, the timing wheel, and the cached clock. |
 | `ValueEntry.lastAccess` seconds vs `lastAccessMinutes` | Stored in seconds; M5's LFU derives minutes at the call site. |
+| `mnemo-server` is "Netty transport", but M2 says "thread-per-connection" | Sequenced, not contradictory. M2 is the platform-thread baseline; M6 adds Netty and virtual-thread arms behind a `Transport` interface and benchmarks all three. The module diagram describes the post-M6 end state. |
+| `Transport` interface (P6 design decision) | Not introduced until M6, when there are actually three implementations to unify. One concrete class until then. |
 
-### Target architecture beyond M1 (per ROADMAP.md, not yet implemented)
+### Target architecture beyond M2 (per ROADMAP.md, not yet implemented)
 
 `Keyspace` becomes an interface with a sharded implementation and a `MeteredKeyspace` decorator;
 eviction and expiration become pluggable strategies; execution becomes single-writer-per-shard
