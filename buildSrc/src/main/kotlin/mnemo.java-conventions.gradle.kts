@@ -2,7 +2,7 @@
 // module needs regardless of whether it's pure JDK or Spring-aware.
 
 plugins {
-    java
+    `java-library`
 }
 
 java {
